@@ -496,6 +496,30 @@
   let collator = new Intl.Collator('en', { sensitivity: 'base', numeric: true });
 
   /** UI string in the current language, with {var} substitution. */
+  /* v2 strings: sections, stages, EXP/drops, grouped timelines, level strip, "+N more", contents. */
+  Object.assign(I18N.en, {
+    'sec.history': 'Timeline', 'sec.levels': 'Level progression', 'sec.stages': 'Stages',
+    'sec.raceFeats': 'Racial feats observed (by chapter)', 'feats.count': '{n} observations',
+    'lbl.exp': 'EXP (first kill)', 'lbl.level': 'Level', 'col.exp': 'EXP',
+    'f.drops': 'Drops', 'opt.hasDrops': 'Has drops', 'opt.noDrops': 'No drops',
+    'th.stage': 'Stage', 'th.revealed': 'Revealed', 'th.costCond': 'Cost / condition', 'th.drop': 'Item',
+    'skill.stages': '{n} stages', 'skill.stage1': '1 stage', 'lvl.n': 'Lv {n}',
+    'more.n': '+{n} more', 'more.less': 'Show less',
+    'tl.count': '{n} entries, grouped by arc', 'tl.noArc': 'Other chapters', 'tl.undated': 'No chapter',
+    'toc.title': 'On this page',
+  });
+  Object.assign(I18N.th, {
+    'sec.history': 'ไทม์ไลน์', 'sec.levels': 'พัฒนาการเลเวล', 'sec.stages': 'ขั้นของสกิล',
+    'sec.raceFeats': 'ความสามารถของเผ่าที่ปรากฏ (เรียงตามบท)', 'feats.count': '{n} เหตุการณ์',
+    'lbl.exp': 'EXP (ฆ่าครั้งแรก)', 'lbl.level': 'เลเวล', 'col.exp': 'EXP',
+    'f.drops': 'ของดรอป', 'opt.hasDrops': 'มีของดรอป', 'opt.noDrops': 'ไม่มีของดรอป',
+    'th.stage': 'ขั้น', 'th.revealed': 'เปิดเผยในบท', 'th.costCond': 'ค่าใช้ / เงื่อนไข', 'th.drop': 'ไอเทม',
+    'skill.stages': '{n} ขั้น', 'skill.stage1': '1 ขั้น', 'lvl.n': 'Lv {n}',
+    'more.n': '+อีก {n}', 'more.less': 'ย่อ',
+    'tl.count': '{n} รายการ แบ่งตามภาค', 'tl.noArc': 'บทอื่น ๆ', 'tl.undated': 'ไม่ระบุบท',
+    'toc.title': 'ในหน้านี้',
+  });
+
   function T(key, vars) {
     let s = I18N[lang] && I18N[lang][key];
     if (s == null) s = I18N.en[key];
@@ -1007,14 +1031,56 @@
   /* =================================================================
    * 5. Markdown — the subset used by scene summaries and lore bodies:
    *    #/##/### headings, * - + bullets (nested by indent), 1. lists,
-   *    **bold**, > blockquotes (system messages), 「 」 text, ---, and
-   *    paragraphs. HTML in the source is always escaped first.
+   *    **bold**, *italic*, `code`, > blockquotes (system messages), 「 」 text,
+   *    ---, GFM pipe tables, [[Name]] / [[Name|label]] / [[race:Name]] entity
+   *    links, auto-linked chapter refs ("Ch. 12, 15"), and paragraphs.
+   *    HTML in the source is always escaped first (only a literal <br> survives).
    *    ```jsonl fences (the agents' observation blocks) are dropped.
    * ================================================================= */
+  const UNESC = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" };
+  const unesc = (x) => String(x).replace(/&(?:amp|lt|gt|quot|#39);/g, (m) => UNESC[m]);
+  /** [[Name]], [[Name|label]], [[race:Name]] -> link to the entity (any category); plain text when unresolved.
+   *  Works on already-escaped text, so the label is safe to insert as is. */
+  function wikiLink(target, label) {
+    let tg = unesc(target).trim(), cats = null;
+    const pm = tg.match(/^([a-z]+)\s*:\s*(.+)$/i);
+    if (pm) {
+      const k = pm[1].toLowerCase();
+      const c = CATS.indexOf(k) >= 0 ? k : CATS.find((x) => SINGULAR[x] === k);
+      if (c) { cats = [c]; tg = pm[2].trim(); }
+    }
+    const r = tg ? resolve(tg, cats) : null;
+    const shown = label != null && label.trim() ? label.trim() : esc(r && r.e.id === tg ? plainName(r.e) : tg);
+    return r ? '<a href="' + esc(href(r.cat, r.e.id)) + '">' + shown + '</a>' : shown;
+  }
+  /** "Ch. 12", "ch.12", "Chapter 12", "Chs. 12, 15 & 20", "Ch. 12–15", "ตอนที่ 12" -> each number links to the chapter. */
+  const CHREF_RE = /(\b(?:chapters?|chs?)\b\.?|ตอนที่|บทที่|บท(?=\s*\d))(\s*)(\d{1,4}(?!\d)(?:\s*(?:,|&amp;|and|[–—~-])\s*\d{1,4}(?!\d))*)/gi;
+  function linkChapters(text) {
+    const total = (D.meta && D.meta.chapters_total) || 9999;
+    return text.replace(CHREF_RE, (m0, word, sp, nums) => {
+      let lead = word + sp;
+      return nums.replace(/\d{1,4}/g, (d) => {
+        const n = +d, pre = lead;
+        lead = '';
+        return n >= 1 && n <= total ? '<a class="chref" href="#/chapter/' + n + '">' + pre + d + '</a>' : pre + d;
+      });
+    });
+  }
+  /** Chapter links only in text outside tags and outside existing links. */
+  function linkChaptersHtml(h) {
+    if (!/\d/.test(h)) return h;
+    return h.split(/(<a\b[^>]*>[\s\S]*?<\/a>|<[^>]+>)/).map((seg, i) => (i % 2 ? seg : linkChapters(seg))).join('');
+  }
   function inline(s) {
-    return esc(s)
+    const codes = [];
+    let h = esc(s).replace(/`([^`]+)`/g, (m0, c) => { codes.push(c); return '\u0000' + (codes.length - 1) + '\u0000'; });
+    h = h.replace(/\[\[([^\]|]+?)(?:\|([^\]]*?))?\]\]/g, (m0, tg, lb) => wikiLink(tg, lb))
+      .replace(/&lt;br\s*\/?&gt;/gi, '<br>')
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[\s(\[])\*(?=[^\s*])([^*]+?)\*(?=$|[\s).,;:!?\]])/g, '$1<em>$2</em>')
       .replace(/「([^」]*)」/g, '<span class="sys">「$1」</span>');
+    h = linkChaptersHtml(h);
+    return codes.length ? h.replace(/\u0000(\d+)\u0000/g, (m0, i) => '<code>' + codes[+i] + '</code>') : h;
   }
   function renderList(items) {
     let out = '';
@@ -1022,12 +1088,46 @@
     for (const it of items) {
       const tag = it.ordered ? 'ol' : 'ul';
       while (stack.length && stack[stack.length - 1].depth > it.depth) out += '</li></' + stack.pop().tag + '>';
-      if (!stack.length || stack[stack.length - 1].depth < it.depth) { out += '<' + tag + '>'; stack.push({ tag, depth: it.depth }); }
-      else out += '</li>';
+      const top = stack[stack.length - 1];
+      if (top && top.depth === it.depth && top.tag !== tag) out += '</li></' + stack.pop().tag + '>';
+      const cur = stack[stack.length - 1];
+      if (!cur || cur.depth < it.depth) {
+        out += '<' + tag + (it.ordered && it.start > 1 ? ' start="' + it.start + '"' : '') + '>';
+        stack.push({ tag, depth: it.depth });
+      } else out += '</li>';
       out += '<li>' + inline(it.text);
     }
     while (stack.length) out += '</li></' + stack.pop().tag + '>';
     return out;
+  }
+  /** GFM table row -> cells. Pipes inside [[a|b]] links and `code` do not split; \| is a literal pipe. */
+  function splitRow(line) {
+    let x = line.trim();
+    if (x.charAt(0) === '|') x = x.slice(1);
+    if (x.slice(-1) === '|' && x.slice(-2) !== '\\|') x = x.slice(0, -1);
+    const cells = [];
+    let cur = '', depth = 0, code = false;
+    for (let i = 0; i < x.length; i++) {
+      const c = x.charAt(i), nx = x.charAt(i + 1);
+      if (c === '\\' && nx === '|') { cur += '|'; i++; continue; }
+      if (c === '`') code = !code;
+      else if (!code && c === '[' && nx === '[') { depth++; cur += '[['; i++; continue; }
+      else if (!code && c === ']' && nx === ']' && depth) { depth--; cur += ']]'; i++; continue; }
+      else if (c === '|' && !depth && !code) { cells.push(cur.trim()); cur = ''; continue; }
+      cur += c;
+    }
+    cells.push(cur.trim());
+    return cells;
+  }
+  const TBL_SEP = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+  function renderTable(head, sep, rows) {
+    const al = sep.map((c) => (/^:-+:$/.test(c) ? 'center' : /-:$/.test(c) ? 'num' : ''));
+    const cell = (tag, c, j) => '<' + tag + (al[j] ? ' class="' + al[j] + '"' : '') + '>'
+      + (tag === 'th' ? '<span class="th-static">' + inline(c) + '</span>' : inline(c)) + '</' + tag + '>';
+    // a minimum width per column keeps wide tables readable on phones (the wrapper scrolls sideways)
+    return '<div class="table-wrap md-table"><table class="db compact" style="min-width:' + Math.min(head.length * 7, 56) + 'em"><thead><tr>' + head.map((c, j) => cell('th', c, j)).join('')
+      + '</tr></thead><tbody>' + rows.map((r) => '<tr>' + head.map((x, j) => cell('td', r[j] == null ? '' : r[j], j)).join('') + '</tr>').join('')
+      + '</tbody></table></div>';
   }
   function md(src) {
     const lines = String(src == null ? '' : src).replace(/\r\n?/g, '\n').split('\n');
@@ -1038,14 +1138,26 @@
     const flushList = () => { if (list) { out.push(renderList(list)); list = null; } };
     const flushAll = () => { flushPara(); flushQuote(); flushList(); };
     const closeFence = () => { if (fence && !/^jsonl?$/.test(fence.lang)) out.push('<pre>' + esc(fence.body.join('\n')) + '</pre>'); fence = null; };
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
       if (fence) { if (/^\s*```/.test(line)) closeFence(); else fence.body.push(line); continue; }
       let m = line.match(/^\s*```\s*([\w-]*)/);
       if (m) { flushAll(); fence = { lang: m[1].toLowerCase(), body: [] }; continue; }
       if (!line.trim()) { flushAll(); continue; }
+      if (line.indexOf('|') >= 0 && i + 1 < lines.length && TBL_SEP.test(lines[i + 1])) {
+        const head = splitRow(line), sep = splitRow(lines[i + 1]);
+        if (sep.length === head.length && (head.length > 1 || lines[i + 1].indexOf('|') >= 0) && sep.every((c) => /^:?-+:?$/.test(c))) {
+          flushAll();
+          const rows = [];
+          for (i += 2; i < lines.length && lines[i].trim() && lines[i].indexOf('|') >= 0; i++) rows.push(splitRow(lines[i]));
+          i--;
+          out.push(renderTable(head, sep, rows));
+          continue;
+        }
+      }
       if ((m = line.match(/^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/))) {
         flushAll();
-        const tag = m[1].length <= 3 ? 'h3' : 'h4';
+        const lv = m[1].length, tag = lv <= 3 ? 'h3' : lv === 4 ? 'h4' : 'h5';
         out.push('<' + tag + '>' + inline(m[2]) + '</' + tag + '>');
         continue;
       }
@@ -1054,7 +1166,8 @@
       if ((m = line.match(/^(\s*)([*+-]|\d{1,3}[.)])\s+(.*)$/))) {
         flushPara(); flushQuote();
         const depth = Math.min(3, Math.floor(m[1].replace(/\t/g, '  ').length / 2));
-        (list || (list = [])).push({ depth, ordered: /\d/.test(m[2]), text: m[3] });
+        const ordered = /\d/.test(m[2]);
+        (list || (list = [])).push({ depth, ordered, start: ordered ? parseInt(m[2], 10) : 1, text: m[3] });
         continue;
       }
       if (list && /^\s+\S/.test(line)) { list[list.length - 1].text += ' ' + line.trim(); continue; }
@@ -1121,9 +1234,48 @@
     return body.length ? html`<table class="infobox"><tbody>${body}</tbody></table>` : '';
   }
   /** A titled section; empty bodies produce nothing (sections hide when data is missing). */
+  let TOC = null;   // [[id, labelHtml]] collected while a detail page renders (see viewDetail / detailShell)
+  function tocAdd(key, title) {
+    if (!TOC) return;
+    const lbl = typeof title === 'string' ? esc(title)
+      : toHtml(title).replace(/<span class="(?:en-tag|count)"[^>]*>[\s\S]*?<\/span>/g, '').replace(/<[^>]+>/g, '').trim();
+    if (lbl) TOC.push([key, lbl]);
+  }
   function section(key, title, body) {
     if (blank(body)) return '';
+    tocAdd(key, title);
     return html`<section class="sec" id="s-${key}"><h2>${title}</h2>${body}</section>`;
+  }
+  /** Section folded away in a closed <details>; the heading is the toggle. */
+  function foldSection(key, title, body, count) {
+    if (blank(body)) return '';
+    tocAdd(key, title);
+    return html`<section class="sec fold" id="s-${key}"><details class="sec-fold"><summary><h2>${title}${count ? html` <span class="count">${count}</span>` : ''}</h2></summary>${body}</details></section>`;
+  }
+  /** Curated `sections: [{title: L, body: L(markdown)}]` of any entity, in the given order. */
+  function customSections(e) {
+    const used = new Set();
+    return arr(e.sections).filter((x) => x && typeof x === 'object' && (hasText(x.title) || hasText(x.body))).map((x, i) => {
+      const en = x.title && typeof x.title === 'object' && x.title.en ? x.title.en : t(x.title);
+      let key = 'x-' + (slug(en).slice(0, 48) || String(i + 1));
+      while (used.has(key)) key += '-' + (i + 1);
+      used.add(key);
+      return section(key, hasText(x.title) ? tx(x.title) : T('sec.body'), block(x.body, 'long'));
+    });
+  }
+  function tocNav(toc) {
+    if (toc.length < 5) return '';
+    const here = location.hash || '#/';
+    return html`<nav class="toc" aria-label="${T('toc.title')}"><h2>${T('toc.title')}</h2><ol>${toc.map((x) => html`<li><a href="${here}" data-scroll="s-${x[0]}">${raw(x[1])}</a></li>`)}</ol></nav>`;
+  }
+  /** First `max` fragments; the rest sit behind a "+N more" toggle. sep '' suits flex link lists. */
+  function capList(parts, max, sep) {
+    const list = parts.map(toHtml).filter((x) => x.trim() !== '');
+    const sp = sep == null ? ', ' : sep;
+    if (list.length <= max + 1) return raw(list.join(sp));
+    const more = T('more.n', { n: fmtNum(list.length - max) });
+    return raw(list.slice(0, max).join(sp) + '<span class="cap-rest" hidden>' + sp + list.slice(max).join(sp) + '</span>'
+      + ' <button type="button" class="more-btn" data-act="cap-more" aria-expanded="false" data-more="' + esc(more) + '" data-less="' + esc(T('more.less')) + '">' + esc(more) + '</button>');
   }
   /** Small static table. cols: [{label, cls}], rows: arrays of cell HTML. */
   function miniTable(cols, rows) {
@@ -1131,12 +1283,67 @@
     return html`<div class="table-wrap"><table class="db compact"><thead><tr>${cols.map((c) => html`<th class="${c.cls || ''}"><span class="th-static">${c.label}</span></th>`)}</tr></thead><tbody>${rows.map((r) => html`<tr>${r.map((cell, i) => html`<td class="${cols[i] && cols[i].cls ? cols[i].cls : ''}">${cell}</td>`)}</tr>`)}</tbody></table></div>`;
   }
   const chCell = (ch) => { const n = toInt(ch); return n != null ? chChip(n) : ''; };
-  /** Chapter-ordered list of {ch, text}. */
+  const TL_GROUP_MIN = 10;
+  /** Chapter-ordered list of {ch, text}. Long lists are grouped by story arc (DB.chapters[].arc) in
+   *  <details> blocks with a count; the first two arcs start open. */
   function timeline(items) {
     const chOf = (x) => { const n = toInt(x.ch); return n == null ? 1e9 : n; };
     const list = arr(items).filter((x) => x && (toInt(x.ch) != null || hasText(x.text))).slice().sort((a, b) => chOf(a) - chOf(b));
     if (!list.length) return '';
-    return html`<ol class="timeline">${list.map((x) => html`<li><div class="tl-ch">${chCell(x.ch)}</div><div class="tl-text">${tx(x.text)}</div></li>`)}</ol>`;
+    const ol = (xs) => html`<ol class="timeline">${xs.map((x) => html`<li><div class="tl-ch">${chCell(x.ch)}</div><div class="tl-text">${tx(x.text)}</div></li>`)}</ol>`;
+    if (list.length < TL_GROUP_MIN) return ol(list);
+    const groups = new Map();
+    for (const x of list) {
+      const n = toInt(x.ch), a = n != null ? arcOfChapter(n) : null;
+      const k = a ? a.id : n == null ? '~undated' : '~other';
+      if (!groups.has(k)) groups.set(k, { a, k, xs: [] });
+      groups.get(k).xs.push(x);
+    }
+    if (groups.size < 2) return ol(list);
+    return html`<div class="tl-groups">
+      <div class="tl-tools"><span class="muted small">${T('tl.count', { n: fmtNum(list.length) })}</span><span class="spacer"></span><button type="button" class="btn" data-act="tl-open">${T('maps.expand')}</button><button type="button" class="btn" data-act="tl-close">${T('maps.collapse')}</button></div>
+      ${Array.from(groups.values()).map((g, i) => html`<details class="tl-arc"${i < 2 ? raw(' open') : ''}><summary><span class="tl-arc-name">${g.a ? arcLabel(g.a) : T(g.k === '~undated' ? 'tl.undated' : 'tl.noArc')}</span>${g.a && g.a.range ? html`<span class="tl-arc-range">${rangeText(g.a.range)}</span>` : ''}<span class="count">${fmtNum(g.xs.length)}</span></summary>${ol(g.xs)}</details>`)}
+    </div>`;
+  }
+  /** level_history [{ch, level}] -> "Lv 1 · Ch. 1 → Lv 2 · Ch. 21 …" (first chapter of each new level). */
+  function levelStrip(hist) {
+    const pts = arr(hist).filter((h) => h && h.level != null && String(h.level).trim() !== '')
+      .map((h) => ({ ch: toInt(h.ch), lv: String(h.level).trim() }))
+      .sort((a, b) => (a.ch == null ? 1e9 : a.ch) - (b.ch == null ? 1e9 : b.ch));
+    const steps = [];
+    for (const p of pts) if (!steps.length || steps[steps.length - 1].lv !== p.lv) steps.push(p);
+    if (!steps.length) return '';
+    // plain numbers read "Lv 8"; any other wording (e.g. "level up (to 8)") is shown as written, muted
+    return html`<ol class="lvl-strip">${steps.map((p) => html`<li>${/^\d+(\.\d+)?\+?$/.test(p.lv) ? html`<span class="lv">${T('lvl.n', { n: p.lv })}</span>` : html`<span class="lv-text">${p.lv}</span>`}${p.ch != null ? chChip(p.ch) : ''}</li>`)}</ol>`;
+  }
+  /** Skill stages [{stage, name, effect, ch, cost, note}] sorted by stage; empty columns are dropped. */
+  const stageNum = (x) => { const m = String(x.stage == null ? '' : x.stage).match(/\d+(\.\d+)?/); return m ? parseFloat(m[0]) : 1e9; };
+  const stagesOf = (e) => arr(e.stages).filter((x) => x && typeof x === 'object' && (x.stage != null || hasText(x.name) || hasText(x.effect)));
+  function stagesTable(e) {
+    const st = stagesOf(e).slice().sort((a, b) => stageNum(a) - stageNum(b) || (toInt(a.ch) || 1e9) - (toInt(b.ch) || 1e9));
+    if (!st.length) return '';
+    const cols = [{ label: T('th.stage'), cls: 'center nowrap' }, { label: T('th.name') }, { label: T('th.effect'), cls: 'wide' },
+      { label: T('th.revealed'), cls: 'nowrap' }, { label: T('th.costCond') }, { label: T('th.note') }];
+    const rows = st.map((x) => [x.stage == null || String(x.stage).trim() === '' ? '' : html`<span class="badge amber">${t(x.stage)}</span>`,
+      html`<strong>${tx(x.name, true)}</strong>`, tx(x.effect), chCell(x.ch), tx(x.cost), tx(x.note)]);
+    const keep = cols.map((c, j) => j < 3 || rows.some((r) => !blank(r[j])));
+    return miniTable(cols.filter((c, j) => keep[j]), rows.map((r) => r.filter((c, j) => keep[j])));
+  }
+  /** Monster EXP [{value, ch, note}] and drops_list [{item, ch, note}]. */
+  const expList = (e) => arr(e.exp).filter((x) => x && typeof x === 'object' && x.value != null && String(t(x.value)).trim() !== '');
+  const expNum = (v) => { if (typeof v === 'number') return v; const m = t(v).match(/\d[\d,]*(\.\d+)?/); return m ? parseFloat(m[0].replace(/,/g, '')) : null; };
+  const expText = (v) => (typeof v === 'number' ? fmtNum(v) : t(v));
+  function maxExp(e) { let best = null; for (const x of expList(e)) { const n = expNum(x.value); if (n != null && (best == null || n > best)) best = n; } return best; }
+  function expHtml(e) {
+    const xs = expList(e);
+    return xs.length ? html`<ul class="exp-list">${xs.map((x) => html`<li><strong>${expText(x.value)}</strong>${toInt(x.ch) != null ? html` ${chChip(toInt(x.ch))}` : ''}${hasText(x.note) ? html` <span class="muted small">${tx(x.note)}</span>` : ''}</li>`)}</ul>` : '';
+  }
+  const dropItem = (v) => (v && typeof v === 'object' && v.id == null && v.name == null ? tx(v) : refHtml(v, ['items', 'essences']));
+  const hasDrops = (e) => arr(e.drops_list).some((d) => d && (d.item || hasText(d.note))) || hasText(e.drops);
+  function dropsTable(e) {
+    const xs = arr(e.drops_list).filter((d) => d && (d.item || hasText(d.note)));
+    return miniTable([{ label: T('th.drop') }, { label: T('th.chapter'), cls: 'nowrap' }, { label: T('th.note') }],
+      xs.map((d) => [dropItem(d.item), chCell(d.ch), tx(d.note)]));
   }
   /** Bulleted list of bilingual strings. */
   function bullets(list) {
@@ -1249,12 +1456,15 @@
       extra: (e) => [e.mask],
     },
     monsters: {
-      columns: [colName(), colGrade(), colEnum('category', 'col.category', (e) => e.category),
+      columns: [colName(), colGrade(),
+        { key: 'exp', label: 'col.exp', cls: 'num nowrap', dir: 'desc', cell: (e) => { const m = maxExp(e); return m != null ? fmtNum(m) : (expList(e).length ? expText(expList(e)[0].value) : ''); }, sort: (e) => maxExp(e) },
+        colEnum('category', 'col.category', (e) => e.category),
         { key: 'floors', label: 'col.floors', cls: 'nowrap', cell: (e) => joinHtml(arr(e.floors).map(floorLabel)), sort: (e) => { const ks = arr(e.floors).map(floorKey).filter(Boolean); return ks.length ? Math.min.apply(null, ks.map(floorOrder)) : null; } },
         { key: 'zones', label: 'col.zones', cls: 'wide', cell: (e) => refListShort(e.zones, ['locations'], 3), sort: (e) => { const z = arr(e.zones)[0]; const l = z ? resolveE(z, 'locations') : null; return l ? plainName(l) : (z || null); } },
         { key: 'essence', label: 'col.essence', cell: (e) => { const es = R.essOfMon.get(e.id); return es ? entLink('essences', es, true) : ''; }, sort: (e) => (R.essOfMon.has(e.id) ? 0 : null) },
         colFirst(), colChapters()],
-      filters: [gradeFilter(), floorFilter((e) => e.floors), enumFilter('category', 'f.category', (e) => e.category)],
+      filters: [gradeFilter(), floorFilter((e) => e.floors), enumFilter('category', 'f.category', (e) => e.category),
+        boolFilter('drops', 'f.drops', hasDrops, 'opt.hasDrops', 'opt.noDrops')],
       extra: (e) => [e.category].concat(arr(e.floors)),
     },
     essences: {
@@ -1269,7 +1479,8 @@
       extra: (e) => arr(e.colors).concat(arr(e.passive).map((p) => p && p.name), arr(e.actives).map((a) => a && a.name)),
     },
     skills: {
-      columns: [colName(), colEnum('kind', 'col.kind', (e) => e.kind),
+      columns: [Object.assign(colName(), { cell: (e, cat) => { const n = stagesOf(e).length; return html`${entLink(cat, e)}${n ? html` <span class="badge dim stg">${n === 1 ? T('skill.stage1') : T('skill.stages', { n })}</span>` : ''}`; } }),
+        colEnum('kind', 'col.kind', (e) => e.kind),
         { key: 'source', label: 'col.source', cell: (e) => sourceHtml(e.source), sort: (e) => sourceName(e.source) || null },
         { key: 'users', label: 'col.users', cls: 'wide', cell: (e) => refListShort(skillUsers(e).map((u) => u.who), ['characters'], 3), sort: (e) => skillUsers(e).length || null, dir: 'desc' },
         { key: 'cost', label: 'col.cost', cell: (e) => tx(e.cost, true), sort: (e) => t(e.cost) || null },
@@ -1335,6 +1546,8 @@
    *     info box, sections (empty ones are hidden), then "Appears in chapters".
    * ================================================================= */
   function detailShell(cat, e, parts) {
+    const toc = TOC || [];
+    TOC = null;
     const p = headNames(e);
     const aliases = arr(e.aliases).filter((a) => a != null && String(a).trim() !== '');
     const info = infobox((parts.info || []).concat([[T('lbl.id'), html`<code>${e.id}</code>`]]));
@@ -1344,10 +1557,10 @@
       <header class="ent-head">
         <h1 class="ent-name">${p.main}${p.alt ? html`<span class="ent-alt" lang="${lang === 'th' ? 'en' : 'th'}">${p.alt}</span>` : ''}</h1>
         ${!blank(parts.badges) ? html`<div class="badges">${parts.badges}</div>` : ''}
-        ${aliases.length ? html`<p class="aka">${T('lbl.aliases')}: <span>${aliases.join(', ')}</span></p>` : ''}
+        ${aliases.length ? html`<p class="aka">${T('lbl.aliases')}: <span>${capList(aliases, 12)}</span></p>` : ''}
       </header>
       <div class="ent-grid">
-        <aside class="ent-side" aria-label="${T('lbl.infobox')}">${info}</aside>
+        <aside class="ent-side" aria-label="${T('lbl.infobox')}">${info}${tocNav(toc.concat([['appears', esc(T('sec.appears'))]]))}</aside>
         <div class="ent-main">${parts.main}${appearsIn(e.refs)}</div>
       </div>`;
   }
@@ -1398,18 +1611,20 @@
         [T('lbl.grade'), gradeBadge(e.grade, true)],
         [T('lbl.category'), enumLabel(e.category)],
         [T('lbl.floors'), floorLinks(floors)],
-        [T('lbl.zones'), refList(e.zones, ['locations'])],
+        [T('lbl.zones'), capList(arr(e.zones).map((z) => refHtml(z, ['locations'])), 6)],
         [T('lbl.essence'), es ? entLink('essences', es) : refHtml(e.essence, ['essences'])],
+        [T('lbl.exp'), expHtml(e)],
         firstRow(e),
       ],
       main: [
         section('summary', T('sec.summary'), block(e.summary)),
+        customSections(e),
         section('appearance', T('sec.appearance'), block(e.appearance)),
         section('abilities', T('sec.abilities'), miniTable([{ label: T('th.ability') }, { label: T('th.effect') }],
           arr(e.abilities).filter((a) => a && (a.name || hasText(a.desc))).map((a) => [html`<strong>${a.name || ''}</strong>`, tx(a.desc)]))),
         section('weakness', T('sec.weakness'), block(e.weakness)),
         section('behavior', T('sec.behavior'), block(e.behavior)),
-        section('drops', T('sec.drops'), block(e.drops)),
+        section('drops', T('sec.drops'), html`${dropsTable(e)}${block(e.drops)}`),
         section('essence', T('sec.essence'), es ? essencePreview(es) : ''),
         section('encounters', T('sec.encounters'), timeline(e.encounters)),
       ],
@@ -1434,11 +1649,13 @@
       ],
       main: [
         section('summary', T('sec.summary'), block(e.summary)),
+        customSections(e),
         section('stats', T('sec.stats'), miniTable([{ label: T('th.stat') }, { label: T('th.value'), cls: 'num' }],
           arr(e.stats).filter((s) => s && (s.stat || s.value != null)).map((s) => [tx(s.stat), statVal(s.value)]))),
         section('passive', T('sec.passive'), passives.map((p) => html`<div class="ability"><h3>${skillName(p.name, e.id)}</h3>${block(p.desc)}${hasText(p.transcendence) ? html`<p class="small"><span class="muted">${T('th.trans')}:</span> ${tx(p.transcendence)}</p>` : ''}</div>`)),
         section('actives', T('sec.actives'), miniTable(cols, actives.map((a) => [swatch(a.color, true), html`<strong>${skillName(a.name, e.id)}</strong>`, tx(a.desc)].concat(hasTrans ? [tx(a.transcendence)] : [])))),
         section('users', T('sec.users'), peopleTable(users)),
+        section('history', T('sec.history'), timeline(e.timeline)),
       ],
     });
   };
@@ -1457,8 +1674,9 @@
       info: [
         [T('lbl.race'), refHtml(e.race, ['races'])],
         [T('lbl.gender'), enumLabel(e.gender)],
-        [T('lbl.roles'), joinHtml(arr(e.roles).map((r) => tx(r)))],
-        [T('lbl.affiliations'), refList(e.affiliations, ['factions'])],
+        [T('lbl.level'), e.level != null && typeof e.level !== 'object' && String(e.level).trim() !== '' ? String(e.level) : ''],
+        [T('lbl.roles'), capList(arr(e.roles).map((r) => tx(r)), 4, '<br>')],
+        [T('lbl.affiliations'), capList(arr(e.affiliations).map((v) => refHtml(v, ['factions'])), 6)],
         [T('lbl.status'), statusBadge(e.status)],
         [T('lbl.evil'), e.evil_spirit == null ? '' : (isEvil(e) ? badge(T('yes'), 'crimson') : T('no'))],
         [T('lbl.mask'), tx(e.mask)],
@@ -1467,6 +1685,8 @@
       ],
       main: [
         section('summary', T('sec.summary'), block(e.summary)),
+        customSections(e),
+        section('levels', T('sec.levels'), levelStrip(e.level_history)),
         section('appearance', T('sec.appearance'), block(e.appearance)),
         section('personality', T('sec.personality'), block(e.personality)),
         section('abilities', T('sec.abilities'), block(e.abilities)),
@@ -1491,18 +1711,20 @@
       ],
       main: [
         section('summary', T('sec.summary'), block(e.summary)),
+        customSections(e),
         section('traits', T('sec.traits'), bullets(e.traits)),
-        section('abilities', T('sec.raceAbilities'), abilities.map((a) => {
+        foldSection('abilities', T('sec.raceFeats'), abilities.map((a) => {
           const ex = arr(a.examples).filter((x) => x && (x.who || hasText(x.desc)))
             .sort((p, q) => (toInt(p.ch) || 1e9) - (toInt(q.ch) || 1e9))
             .map((x) => [refHtml(x.who, ['characters']), chCell(x.ch), tx(x.desc)]);
-          return html`<div class="ability"><h3>${a.name || ''}</h3>${block(a.desc)}${miniTable([{ label: T('th.character') }, { label: T('th.chapter'), cls: 'nowrap' }, { label: T('th.what') }], ex)}</div>`;
-        })),
+          return html`<div class="ability"><h3>${a.name || ''} <span class="count">${fmtNum(ex.length)}</span></h3>${block(a.desc)}${miniTable([{ label: T('th.character') }, { label: T('th.chapter'), cls: 'nowrap' }, { label: T('th.what') }], ex)}</div>`;
+        }), T('feats.count', { n: fmtNum(abilities.reduce((n, a) => n + arr(a.examples).filter((x) => x && (x.who || hasText(x.desc))).length, 0)) })),
         section('roles', T('sec.roles'), bullets(e.roles)),
         section('culture', T('sec.culture'), block(e.culture)),
-        section('homeland', T('sec.homeland'), arr(e.homeland).length ? html`<p class="linklist">${arr(e.homeland).map((h) => refHtml(h, ['locations']))}</p>` : ''),
-        section('notable', T('sec.notable'), arr(e.notable).length ? html`<p class="linklist">${arr(e.notable).map((c) => refHtml(c, ['characters']))}</p>` : ''),
+        section('homeland', T('sec.homeland'), arr(e.homeland).length ? html`<p class="linklist">${capList(arr(e.homeland).map((h) => refHtml(h, ['locations'])), 12, '')}</p>` : ''),
+        section('notable', T('sec.notable'), arr(e.notable).length ? html`<p class="linklist">${capList(arr(e.notable).map((c) => refHtml(c, ['characters'])), 20, '')}</p>` : ''),
         section('members', T('sec.raceMembers'), charTable(members.slice(0, 300), true)),
+        section('history', T('sec.history'), timeline(e.timeline)),
       ],
     });
   };
@@ -1523,8 +1745,11 @@
       ],
       main: [
         section('desc', T('sec.description'), block(e.desc)),
+        customSections(e),
+        section('stages', T('sec.stages'), stagesTable(e)),
         section('source', T('sec.source'), srcEss ? essencePreview(srcEss) : ''),
-        section('users', T('sec.skillUsers'), users.length ? html`<p class="linklist">${users.map((u) => refHtml(u.who, ['characters']))}</p>` : ''),
+        section('users', T('sec.skillUsers'), users.length ? html`<p class="linklist">${capList(users.map((u) => refHtml(u.who, ['characters'])), 24, '')}</p>` : ''),
+        section('history', T('sec.history'), timeline(e.timeline)),
       ],
     });
   };
@@ -1544,9 +1769,11 @@
       ],
       main: [
         section('summary', T('sec.summary'), block(e.summary)),
+        customSections(e),
         section('effects', T('sec.effects'), block(e.effects)),
         section('owners', T('sec.owners'), peopleTable(owners)),
         section('obtained', T('sec.obtained'), block(e.obtained)),
+        section('history', T('sec.history'), timeline(e.timeline)),
       ],
     });
   };
@@ -1572,12 +1799,14 @@
       ],
       main: [
         section('summary', T('sec.summary'), block(e.summary)),
+        customSections(e),
         section('features', T('sec.features'), bullets(e.features)),
         section('rules', T('sec.rules'), block(e.rules)),
         section('inside', T('sec.inside'), miniTable([{ label: T('th.name') }, { label: T('th.kind') }],
           kids.map((k) => [entLink('locations', k), enumLabel(k.kind)]))),
         section('monsters', T('sec.monstersHere'), miniTable([{ label: T('th.monster') }, { label: T('th.grade'), cls: 'center' }, { label: T('th.category') }],
           mons.map((m) => [entLink('monsters', m), gradeBadge(m.grade) || dash(), enumLabel(m.category)]))),
+        section('history', T('sec.history'), timeline(e.timeline)),
       ],
     });
   };
@@ -1594,7 +1823,9 @@
       ],
       main: [
         section('summary', T('sec.summary'), block(e.summary)),
+        customSections(e),
         section('members', T('sec.members'), charTable(members)),
+        section('history', T('sec.history'), timeline(e.timeline)),
       ],
     });
   };
@@ -1603,7 +1834,7 @@
     return detailShell('lore', e, {
       badges: [badge(enumLabel(e.topic))],
       info: [[T('lbl.topic'), enumLabel(e.topic)], firstRow(e)],
-      main: [section('body', T('sec.body'), block(e.body))],
+      main: [section('body', T('sec.body'), block(e.body, 'long')), customSections(e)],
     });
   };
 
@@ -1854,7 +2085,10 @@
     let e = BY_ID[cat].get(id);
     if (!e) { const r = resolve(id, [cat]); if (r) e = r.e; }   // tolerate links by name or slug
     if (!e) return viewMissing(cat, id);
-    return { title: plainName(e), nav: NAV_OF[cat], html: DETAIL[cat](e) };
+    TOC = [];
+    let out;
+    try { out = DETAIL[cat](e); } finally { TOC = null; }
+    return { title: plainName(e), nav: NAV_OF[cat], html: out };
   }
   function viewMissing(cat, id) {
     const sim = runSearch(prettyId(id), cat, 8);
@@ -1987,7 +2221,8 @@
         <div class="page-head"><h1>${T('story.title')}</h1><p class="lede">${T('story.lede')}</p></div>
         ${D.arcs.length ? html`<div class="ribbon-wrap">${ribbon()}</div>` : ''}
         <div class="ch-bar">${jumpForm('')}<span class="muted small">${T('story.coverage', { have: fmtNum(D.chapters.length), total: fmtNum(total - D.meta.chapters_missing.length) })}</span></div>
-        ${D.arcs.length ? html`<div class="arcs">${D.arcs.map((a) => {
+        ${D.arcs.length ? (() => {
+          const card = (a) => {
           const have = chaptersOfArc(a).length, len = arcLen(a);
           const p = headNames(a);
           return html`<a class="arc-card" href="#/arc/${encodeURIComponent(a.id)}">
@@ -1997,7 +2232,11 @@
             <div class="arc-meta">${len ? T('arc.coverage', { have: fmtNum(have), total: fmtNum(len) }) : ''}</div>
             ${len ? html`<div class="progress" aria-hidden="true"><i style="width:${Math.min(100, (have / len) * 100).toFixed(1)}%"></i></div>` : ''}
           </a>`;
-        })}</div>` : html`<p class="notice">${T('story.noArcs')}</p>`}
+          };
+          const groups = [];
+          D.arcs.forEach((a) => { const k = a.part ? t(a.part) : ''; if (!groups.length || groups[groups.length - 1].k !== k) groups.push({ k, part: a.part, list: [] }); groups[groups.length - 1].list.push(a); });
+          return groups.map((g) => html`${g.k ? html`<h2 class="part-head">${tx(g.part)}</h2>` : ''}<div class="arcs">${g.list.map(card)}</div>`);
+        })() : html`<p class="notice">${T('story.noArcs')}</p>`}
         ${orphans.length ? html`<section class="subarc"><h3>${T('story.orphans')}</h3>${chapterItems(orphans)}</section>` : ''}`,
     };
   }
@@ -2062,7 +2301,7 @@
   function inThisChapter(n) {
     const idx = chapterIndex().get(n);
     if (!idx) return '';
-    const rows = CATS.filter((c) => idx[c] && idx[c].length).map((c) => html`<dt>${T('cat.' + c)}</dt><dd class="linklist">${idx[c].slice().sort((a, b) => collator.compare(plainName(a), plainName(b))).map((e) => entLink(c, e, true))}</dd>`);
+    const rows = CATS.filter((c) => idx[c] && idx[c].length).map((c) => html`<dt>${T('cat.' + c)}</dt><dd class="linklist">${capList(idx[c].slice().sort((a, b) => collator.compare(plainName(a), plainName(b))).map((e) => entLink(c, e, true)), 24, '')}</dd>`);
     return section('inch', T('ch.inThis'), html`<dl class="inch">${rows}</dl>`);
   }
   function chNavBtn(n, dir) {
@@ -2089,6 +2328,7 @@
     return {
       title: T('ch.title', { n }) + (main ? ': ' + main : ''), nav: 'story',
       html: html`
+        <div class="reading">
         ${crumbs([[T('nav.story'), '#/story']].concat(arc ? [[T('arc.n', { n: arc.n == null ? '?' : arc.n }), '#/arc/' + encodeURIComponent(arc.id)]] : [], [[T('ch.short', { n })]]))}
         <header class="page-head ch-head"><h1>${T('ch.title', { n })}${main ? ': ' + main : ''}</h1>${alt ? html`<p class="alt-title" lang="${lang === 'th' ? 'en' : 'th'}">${alt}</p>` : ''}</header>
         ${bar}
@@ -2096,13 +2336,14 @@
         ${c ? html`<dl class="inch ch-meta">
             ${arc ? html`<dt>${T('ch.arc')}</dt><dd><a href="#/arc/${encodeURIComponent(arc.id)}">${arcLabel(arc)}</a>${sub ? html` <span class="muted">› ${lang === 'th' && sub.title_th ? sub.title_th : sub.title || ''}</span>` : ''}</dd>` : ''}
             ${setting ? html`<dt>${T('ch.setting')}</dt><dd>${raw(linkPlaces(setting))}</dd>` : ''}
-            ${chars.length ? html`<dt>${T('ch.chars')}</dt><dd class="linklist">${chars.map((x) => refHtml(x, ['characters']))}</dd>` : ''}
+            ${chars.length ? html`<dt>${T('ch.chars')}</dt><dd class="linklist">${capList(chars.map((x) => refHtml(x, ['characters'])), 16, '')}</dd>` : ''}
           </dl>
           ${hasText(c.tldr) ? html`<section class="tldr"><h2>${T('ch.tldr')}</h2><p>${tx(c.tldr)}</p></section>` : ''}` : ''}
         ${!missingSrc && (c || arc) ? html`<section class="sec" id="s-scenes"><h2>${T('ch.scenes')}</h2>${lang !== 'th' ? html`<p class="story-note">${T('ch.thaiNote')}</p>` : ''}<div class="story md" lang="th" data-story><p class="loading">${T('ch.loading')}</p></div></section>` : ''}
         ${inThisChapter(n)}
         <div class="ch-foot">${chNavBtn(prevN, -1)}${chNavBtn(nextN, 1)}</div>
-        <p class="muted small" style="margin-top:12px">${T('ch.keys')}</p>`,
+        <p class="muted small" style="margin-top:12px">${T('ch.keys')}</p>
+        </div>`,
       mount(root, seq) {
         const box = $('[data-story]', root);
         if (!box) return;
@@ -2591,6 +2832,13 @@
       const t0 = ev.target;
       if (!t0 || !t0.closest) return;
       const plain = ev.button === 0 && !ev.metaKey && !ev.ctrlKey && !ev.shiftKey && !ev.altKey;
+      const sc = t0.closest('[data-scroll]');
+      if (sc && plain) {
+        ev.preventDefault();
+        const el = document.getElementById(sc.getAttribute('data-scroll'));
+        if (el) { const d = el.querySelector('details.sec-fold'); if (d) d.open = true; el.scrollIntoView({ block: 'start' }); }
+        return;
+      }
       const a = t0.closest('a[href^="#"]');
       if (a && plain) {
         if (a.hasAttribute('data-skip')) { ev.preventDefault(); VIEW.focus(); return; }
@@ -2603,6 +2851,23 @@
         const box = more.parentElement;
         const refs = (box.getAttribute('data-refs') || '').split(',').map(toInt).filter((n) => n != null);
         box.innerHTML = toHtml(refs.map(chChip));
+        return;
+      }
+      const cm = t0.closest('[data-act="cap-more"]');
+      if (cm) {
+        const rest = cm.previousElementSibling;
+        if (rest && rest.classList.contains('cap-rest')) {
+          const open = rest.hidden;
+          rest.hidden = !open;
+          cm.textContent = cm.getAttribute(open ? 'data-less' : 'data-more');
+          cm.setAttribute('aria-expanded', String(open));
+        }
+        return;
+      }
+      const tg = t0.closest('[data-act="tl-open"], [data-act="tl-close"]');
+      if (tg) {
+        const box = tg.closest('.tl-groups');
+        if (box) $$('details.tl-arc', box).forEach((d) => { d.open = tg.getAttribute('data-act') === 'tl-open'; });
         return;
       }
       const tr = t0.closest('tr[data-href]');
