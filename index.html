@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Barbarian Codex</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14.5' fill='%2335261a' stroke='%23d9a441' stroke-width='2.4'/%3E%3Cpath d='M11 5.6v20.8M21 5.6v20.8' stroke='%23d9a441' stroke-width='1.4' opacity='.55'/%3E%3Ccircle cx='16' cy='16' r='4.6' fill='%23d9a441'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/style.css">
+<script>
+  /* Apply the saved theme/language before the first paint (no flash).
+     Storage may throw (private mode, blocked site data): fall back to defaults. */
+  (function () {
+    var root = document.documentElement, theme = null, lang = null;
+    try { theme = window.localStorage.getItem('codex.theme'); lang = window.localStorage.getItem('codex.lang'); } catch (e) {}
+    if (theme !== 'light' && theme !== 'dark') {
+      theme = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+    }
+    root.setAttribute('data-theme', theme);
+    if (lang === 'th') root.setAttribute('lang', 'th');
+  })();
+</script>
+</head>
+<body>
+<div id="app">
+  <a class="skip" href="#view" data-skip>Skip to content</a>
+  <header id="top" class="top"></header>
+  <main id="view" class="view wrap" tabindex="-1">
+    <p class="boot">Loading the codex&hellip;</p>
+    <noscript><p class="notice bad">Barbarian Codex needs JavaScript. Please enable it and reload this page.</p></noscript>
+  </main>
+  <footer id="foot" class="foot"></footer>
+</div>
+<!-- Data first (sets window.DB), then the app. Story files load on demand from data/story/<arc>.js -->
+<script src="data/db.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
