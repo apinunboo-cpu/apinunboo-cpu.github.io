@@ -197,7 +197,7 @@
 
     'lbl.aliases': 'Also known as', 'lbl.id': 'ID', 'lbl.first': 'First appearance', 'lbl.grade': 'Grade',
     'lbl.category': 'Category', 'lbl.floors': 'Floors', 'lbl.zones': 'Zones', 'lbl.essence': 'Essence',
-    'lbl.monster': 'Monster', 'lbl.colors': 'Colours', 'lbl.users': 'Users', 'lbl.kind': 'Kind', 'lbl.source': 'Source',
+    'lbl.monster': 'Monster', 'lbl.madeFrom': 'Made from', 'lbl.colors': 'Colours', 'lbl.users': 'Users', 'lbl.kind': 'Kind', 'lbl.source': 'Source',
     'lbl.cost': 'Cost', 'lbl.cooldown': 'Cooldown', 'lbl.number': 'Number', 'lbl.material': 'Material',
     'lbl.price': 'Price', 'lbl.race': 'Race', 'lbl.gender': 'Gender', 'lbl.roles': 'Roles',
     'lbl.affiliations': 'Affiliations', 'lbl.status': 'Status', 'lbl.evil': 'Evil spirit', 'lbl.mask': 'Round Table mask',
@@ -367,7 +367,7 @@
 
     'lbl.aliases': 'ชื่ออื่น', 'lbl.id': 'รหัส (ID)', 'lbl.first': 'ปรากฏครั้งแรก', 'lbl.grade': 'เกรด',
     'lbl.category': 'ประเภท', 'lbl.floors': 'ชั้น', 'lbl.zones': 'โซน', 'lbl.essence': 'Essence',
-    'lbl.monster': 'มอนสเตอร์', 'lbl.colors': 'สี', 'lbl.users': 'ผู้ใช้', 'lbl.kind': 'ชนิด', 'lbl.source': 'ที่มา',
+    'lbl.monster': 'มอนสเตอร์', 'lbl.madeFrom': 'สังเคราะห์จาก', 'lbl.colors': 'สี', 'lbl.users': 'ผู้ใช้', 'lbl.kind': 'ชนิด', 'lbl.source': 'ที่มา',
     'lbl.cost': 'ค่าใช้', 'lbl.cooldown': 'คูลดาวน์', 'lbl.number': 'หมายเลข', 'lbl.material': 'วัสดุ',
     'lbl.price': 'ราคา', 'lbl.race': 'เผ่าพันธุ์', 'lbl.gender': 'เพศ', 'lbl.roles': 'บทบาท',
     'lbl.affiliations': 'สังกัด', 'lbl.status': 'สถานะ', 'lbl.evil': 'วิญญาณร้าย', 'lbl.mask': 'หน้ากากโต๊ะกลม',
@@ -939,6 +939,18 @@
     return html`<span class="grade g${n}" title="${T('grade.n', { n })}">${long ? T('grade.n', { n }) : n}</span>`;
   }
   const dash = () => html`<span class="muted">—</span>`;
+  /** Grade badge, or the mixed grade of a synthetic (custom-made) essence such as "3+4+5" when it has no single grade. */
+  function gradeOrMix(e, long) {
+    if (!e) return '';
+    const g = gradeBadge(e.grade, long);
+    if (!blank(g)) return g;
+    return e.grade_mix ? html`<span class="badge dim" title="${t(e.grade_note)}">${e.grade_mix}</span>` : '';
+  }
+  /** Synthetic essence parts: "Stats: Arbet (3)" / "Passive: Uumdal (4)" / "Active: Orc Hero (5)". */
+  function madeFromHtml(e) {
+    return joinHtml(arr(e && e.made_from).filter((m) => m && (m.essence || m.label))
+      .map((m) => html`<span>${tx(m.part, true)}: ${m.essence ? refHtml(m.essence, ['essences', 'monsters']) : tx(m.label, true)} ${gradeBadge(m.grade)}</span>`), raw('<br>'));
+  }
   function statusBadge(s) {
     if (!s) return '';
     const k = String(s).toLowerCase();
@@ -1077,6 +1089,7 @@
     h = h.replace(/\[\[([^\]|]+?)(?:\|([^\]]*?))?\]\]/g, (m0, tg, lb) => wikiLink(tg, lb))
       .replace(/&lt;br\s*\/?&gt;/gi, '<br>')
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/~~(.+?)~~/g, '<del class="rm">$1</del>')
       .replace(/(^|[\s(\[])\*(?=[^\s*])([^*]+?)\*(?=$|[\s).,;:!?\]])/g, '$1<em>$2</em>')
       .replace(/「([^」]*)」/g, '<span class="sys">「$1」</span>');
     h = linkChaptersHtml(h);
@@ -1372,7 +1385,7 @@
   const colName = (label) => ({ key: 'name', label: label || 'col.name', cls: 'name', cell: (e, cat) => entLink(cat, e), sort: (e) => plainName(e) });
   const colFirst = () => ({ key: 'first', label: 'col.first', cls: 'num nowrap', cell: (e) => (e.refs.length ? chChip(e.refs[0]) : ''), sort: (e) => (e.refs.length ? e.refs[0] : null) });
   const colChapters = () => ({ key: 'chapters', label: 'col.chapters', cls: 'num', dir: 'desc', cell: (e) => fmtNum(e.refs.length), sort: (e) => e.refs.length });
-  const colGrade = () => ({ key: 'grade', label: 'col.grade', cls: 'center', cell: (e) => gradeBadge(e.grade) || dash(), sort: (e) => toInt(e.grade) });
+  const colGrade = () => ({ key: 'grade', label: 'col.grade', cls: 'center', cell: (e) => (blank(gradeOrMix(e)) ? dash() : gradeOrMix(e)), sort: (e) => toInt(e.grade) });
   const colEnum = (key, label, get) => ({ key, label, cell: (e) => enumLabel(get(e)), sort: (e) => (get(e) ? enumLabel(get(e)) : null) });
 
   /** Filter over a text field (scalar or array). Options + counts come from the data. */
@@ -1591,7 +1604,7 @@
     const passive = arr(es.passive).filter((p) => p && p.name);
     const actives = arr(es.actives).filter((a) => a && a.name);
     return html`<div class="preview">
-      <div class="preview-head">${entLink('essences', es)} ${gradeBadge(es.grade, true)} ${arr(es.colors).map((c) => swatch(c, true))}</div>
+      <div class="preview-head">${entLink('essences', es)} ${gradeOrMix(es, true)} ${arr(es.colors).map((c) => swatch(c, true))}</div>
       ${stats.length || passive.length || actives.length ? html`<dl>
         ${stats.length ? html`<dt>${T('sec.stats')}</dt><dd>${statsInline(stats)}</dd>` : ''}
         ${passive.length ? html`<dt>${T('sec.passive')}</dt><dd>${joinHtml(passive.map((p) => skillName(p.name, es.id)))}</dd>` : ''}
@@ -1639,10 +1652,11 @@
     const passives = arr(e.passive).filter((p) => p && (p.name || hasText(p.desc)));
     const cols = [{ label: T('th.colour'), cls: 'nowrap' }, { label: T('th.skill') }, { label: T('th.effect') }].concat(hasTrans ? [{ label: T('th.trans') }] : []);
     return detailShell('essences', e, {
-      badges: [gradeBadge(e.grade, true), arr(e.colors).map((c) => html`<span class="badge">${swatch(c, true)}</span>`)],
+      badges: [gradeOrMix(e, true), arr(e.colors).map((c) => html`<span class="badge">${swatch(c, true)}</span>`)],
       info: [
         [T('lbl.monster'), mon ? entLink('monsters', mon) : refHtml(e.monster, ['monsters'])],
-        [T('lbl.grade'), gradeBadge(e.grade, true)],
+        [T('lbl.madeFrom'), madeFromHtml(e)],
+        [T('lbl.grade'), gradeOrMix(e, true)],
         [T('lbl.colors'), html`<span class="statline">${arr(e.colors).map((c) => swatch(c, true))}</span>`],
         [T('lbl.users'), users.length ? fmtNum(users.length) : ''],
         firstRow(e),
@@ -1664,7 +1678,7 @@
     const race = e.race ? resolveE(e.race, 'races') : null;
     const essRows = arr(e.essences).map((x) => (typeof x === 'object' && x ? x : { essence: x })).filter((x) => x.essence)
       .sort((a, b) => (toInt(a.ch) || 1e9) - (toInt(b.ch) || 1e9))
-      .map((x) => { const es = resolveE(x.essence, 'essences'); return [refHtml(x.essence, ['essences']), es ? gradeBadge(es.grade) : '', chCell(x.ch), tx(x.note)]; });
+      .map((x) => { const es = resolveE(x.essence, 'essences'); const nm = refHtml(x.essence, ['essences']); return [x.removed ? html`<del class="rm">${nm}</del>` : nm, es ? gradeOrMix(es) : '', chCell(x.ch), tx(x.note)]; });
     const skillRows = arr(e.skills).map((s) => { const sk = resolveE(s, 'skills'); return [refHtml(s, ['skills']), sk ? enumLabel(sk.kind) : '', sk ? sourceHtml(sk.source) : '']; });
     const itemRows = arr(e.items).map((i) => { const it = resolveE(i, 'items'); return [it && it.number ? badge(it.number, 'amber') : '', refHtml(i, ['items']), it ? enumLabel(it.category) : '']; });
     const relRows = arr(e.relationships).filter((r) => r && r.who).map((r) => [refHtml(r.who, ['characters']), tx(r.rel)]);
@@ -1744,7 +1758,9 @@
         firstRow(e),
       ],
       main: [
-        section('desc', T('sec.description'), block(e.desc)),
+        // curated skills can carry both an overview (summary) and a short definition (desc): show both
+        section('summary', T('sec.summary'), block(e.summary)),
+        section('desc', T('sec.description'), t(e.desc).trim() && t(e.desc).trim() === t(e.summary).trim() ? '' : block(e.desc)),
         customSections(e),
         section('stages', T('sec.stages'), stagesTable(e)),
         section('source', T('sec.source'), srcEss ? essencePreview(srcEss) : ''),

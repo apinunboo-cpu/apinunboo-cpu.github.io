@@ -696,3 +696,7 @@ html[lang="th"] .reading .tldr { font-size: 16px; line-height: 1.75; }
 /* story parts */
 .part-head { margin: 30px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--line); font-family: var(--font-display, Georgia, serif); font-size: 20px; color: var(--accent, #8a5a14); }
 .part-head:first-of-type { margin-top: 18px; }
+
+/* removed / erased entries: grey strikethrough (owner request, like Namu) */
+del.rm, del.rm a, del.rm strong { color: var(--muted) !important; text-decoration: line-through; text-decoration-thickness: 1.5px; }
+del.rm a:hover { color: var(--text) !important; }
