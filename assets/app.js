@@ -153,7 +153,7 @@
     'home.colors': 'Essence colours', 'home.coverage': 'Data coverage',
     'cov.range': 'Chapters', 'cov.missing': 'Not in the source', 'cov.inDb': 'Chapters in the database', 'cov.sum': 'Chapters summarized so far',
     'cov.version': 'Data version', 'cov.generated': 'Generated', 'cov.have': 'In the database',
-    'cov.missLegend': 'Not in the source', 'cov.none': 'None',
+    'cov.missLegend': 'Not in the source', 'cov.none': 'None', 'cov.partial': 'Incomplete in the source',
 
     'search.placeholder': 'Search names, aliases, chapters', 'search.label': 'Search the codex',
     'search.cat': 'Search in', 'search.all': 'All categories', 'search.seeAll': 'See all results for “{q}”',
@@ -244,6 +244,7 @@
     'ch.prev': 'Previous chapter', 'ch.next': 'Next chapter', 'ch.jump': 'Jump to chapter', 'ch.go': 'Go',
     'ch.missingSrc': 'Chapter {n} does not exist in the source text; the original numbering skips it.',
     'ch.notInDb': 'Chapter {n} is not in the database yet.',
+    'ch.partialSrc': 'The source file for chapter {n} is incomplete (about {have} of {total} words), so its summary and data cover only the opening part.',
     'ch.outOfRange': 'There is no chapter {n}. The novel runs from chapter 1 to {total}.',
     'ch.inThis': 'Also in this chapter', 'ch.keys': 'Tip: the ← and → keys move between chapters.',
 
@@ -323,7 +324,7 @@
     'home.colors': 'สีของ Essence', 'home.coverage': 'ขอบเขตข้อมูล',
     'cov.range': 'ช่วงบท', 'cov.missing': 'ไม่มีในต้นฉบับ', 'cov.inDb': 'บทที่มีในฐานข้อมูล', 'cov.sum': 'ตอนที่สรุปแล้ว',
     'cov.version': 'เวอร์ชันข้อมูล', 'cov.generated': 'สร้างเมื่อ', 'cov.have': 'มีในฐานข้อมูล',
-    'cov.missLegend': 'ไม่มีในต้นฉบับ', 'cov.none': 'ไม่มี',
+    'cov.missLegend': 'ไม่มีในต้นฉบับ', 'cov.none': 'ไม่มี', 'cov.partial': 'ต้นฉบับไม่ครบ',
 
     'search.placeholder': 'ค้นหาชื่อ ชื่ออื่น หรือเลขบท', 'search.label': 'ค้นหาในฐานข้อมูล',
     'search.cat': 'ค้นหาใน', 'search.all': 'ทุกหมวด', 'search.seeAll': 'ดูผลลัพธ์ทั้งหมดของ “{q}”',
@@ -414,6 +415,7 @@
     'ch.prev': 'บทก่อนหน้า', 'ch.next': 'บทถัดไป', 'ch.jump': 'ไปที่บท', 'ch.go': 'ไป',
     'ch.missingSrc': 'บทที่ {n} ไม่มีอยู่ในต้นฉบับ การนับเลขบทเดิมข้ามบทนี้ไป',
     'ch.notInDb': 'ยังไม่มีข้อมูลบทที่ {n} ในฐานข้อมูล',
+    'ch.partialSrc': 'ไฟล์ต้นฉบับของบทที่ {n} ไม่ครบ (มีราว {have} จาก {total} คำ) สรุปและข้อมูลของบทนี้จึงครอบคลุมแค่ช่วงต้นของตอน',
     'ch.outOfRange': 'ไม่มีบทที่ {n} นิยายมีตั้งแต่บทที่ 1 ถึงบทที่ {total}',
     'ch.inThis': 'ข้อมูลอื่นที่ปรากฏในบทนี้', 'ch.keys': 'เคล็ดลับ: กดปุ่ม ← และ → เพื่อเปลี่ยนบท',
 
@@ -597,6 +599,8 @@
     D.meta = Object.assign({}, m, {
       chapters_total: toInt(m.chapters_total) || 941,
       chapters_missing: normRefs(m.chapters_missing),
+      chapters_partial: arr(m.chapters_partial).map((x) => (x && typeof x === 'object' ? x : { n: x }))
+        .filter((x) => toInt(x.n) != null).map((x) => ({ n: toInt(x.n), have: toInt(x.have), total: toInt(x.total) })),
     });
 
     D.arcs = (Array.isArray(SRC.arcs) ? SRC.arcs : [])
@@ -2080,6 +2084,7 @@
             <dl class="kv">
               <dt>${T('cov.range')}</dt><dd>1–${fmtNum(total)}</dd>
               <dt>${T('cov.missing')}</dt><dd>${m.chapters_missing.length ? m.chapters_missing.join(', ') : T('cov.none')}</dd>
+              ${m.chapters_partial.length ? html`<dt>${T('cov.partial')}</dt><dd>${joinHtml(m.chapters_partial.map((x) => html`<a href="#/chapter/${x.n}">${x.n}</a>`), ', ')}</dd>` : ''}
               <dt>${T('cov.inDb')}</dt><dd>${fmtNum(D.chapters.length)}</dd>${D.meta && D.meta.chapters_summarized ? `<dt>${T('cov.sum')}</dt><dd>${fmtNum(D.meta.chapters_summarized)}</dd>` : ''}
               ${m.version ? html`<dt>${T('cov.version')}</dt><dd>${m.version}</dd>` : ''}
               ${m.generated ? html`<dt>${T('cov.generated')}</dt><dd>${m.generated}</dd>` : ''}
@@ -2333,6 +2338,7 @@
     }
     const c = CH_BY_N.get(n);
     const missingSrc = D.meta.chapters_missing.indexOf(n) >= 0;
+    const partialSrc = D.meta.chapters_partial.find((x) => x.n === n);
     const arc = arcOfChapter(n);
     const sub = subarcOf(arc, n);
     const prevN = neighbor(n, -1), nextN = neighbor(n, 1);
@@ -2349,6 +2355,7 @@
         <header class="page-head ch-head"><h1>${T('ch.title', { n })}${main ? ': ' + main : ''}</h1>${alt ? html`<p class="alt-title" lang="${lang === 'th' ? 'en' : 'th'}">${alt}</p>` : ''}</header>
         ${bar}
         ${missingSrc ? html`<p class="notice">${T('ch.missingSrc', { n })}</p>` : !c ? html`<p class="notice">${T('ch.notInDb', { n })}</p>` : ''}
+        ${partialSrc && c ? html`<p class="notice">${T('ch.partialSrc', { n, have: partialSrc.have != null ? fmtNum(partialSrc.have) : '?', total: partialSrc.total != null ? fmtNum(partialSrc.total) : '?' })}</p>` : ''}
         ${c ? html`<dl class="inch ch-meta">
             ${arc ? html`<dt>${T('ch.arc')}</dt><dd><a href="#/arc/${encodeURIComponent(arc.id)}">${arcLabel(arc)}</a>${sub ? html` <span class="muted">› ${lang === 'th' && sub.title_th ? sub.title_th : sub.title || ''}</span>` : ''}</dd>` : ''}
             ${setting ? html`<dt>${T('ch.setting')}</dt><dd>${raw(linkPlaces(setting))}</dd>` : ''}
